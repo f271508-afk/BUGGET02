@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>工程預算執行狀況</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js" type="module"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js" type="module"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js" type="module"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap');
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background-color: #f8fafc;
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid #e2e8f0;
+        }
+        .table-container::-webkit-scrollbar {
+            height: 8px;
+            width: 8px;
+        }
+        .table-container::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        .table-container::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        .sticky-col {
+            position: sticky;
+            left: 0;
+            z-index: 20;
+        }
+        .sticky-col-shadow {
+            box-shadow: 2px 0 5px -1px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+<body class="text-slate-800">
+
+    <nav class="bg-slate-900 text-white py-3 px-4 sticky top-0 z-50 shadow-md">
+        <div class="container mx-auto flex justify-between items-center">
+            <div class="flex items-center space-x-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                <span class="text-lg font-bold tracking-tight text-blue-50">工程預算執行狀況</span>
+            </div>
+            <div class="flex space-x-3 items-center">
+                <span id="saveStatus" class="text-[10px] text-slate-400 mr-2 uppercase tracking-widest">系統準備中</span>
+                <button onclick="exportToExcel()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded text-xs font-medium transition shadow-sm">
+                    匯出 Excel
+                </button>
+                <label class="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-xs font-medium transition shadow-md">
+                    匯入資料
+                    <input type="file" id="excelInput" accept=".xlsx, .xls" class="hidden">
+                </label>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container mx-auto py-4 px-4">
+        
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+            <div class="glass-card p-3 rounded-lg shadow-sm border-t-2 border-blue-500">
+                <p class="text-slate-500 text-[10px] font-bold uppercase tracking-wider">總執行預算</p>
+                <h3 id="totalExecBudget" class="text-lg font-bold mt-0.5 text-slate-800">$0 <span class="text-[10px] font-normal text-slate-400">億</span></h3>
+            </div>
+            <div class="glass-card p-3 rounded-lg shadow-sm border-t-2 border-emerald-500">
+                <p class="text-slate-500 text-[10px] font-bold uppercase tracking-wider">累計已請款</p>
+                <h3 id="totalPaid" class="text-lg font-bold mt-0.5 text-emerald-600">$0 <span class="text-[10px] font-normal text-slate-400">億</span></h3>
+            </div>
+            <div class="glass-card p-3 rounded-lg shadow-sm border-t-2 border-amber-500">
+                <p class="text-slate-500 text-[10px] font-bold uppercase tracking-wider">預算增減差異</p>
+                <h3 id="totalDiff" class="text-lg font-bold mt-0.5 text-amber-700">$0 <span class="text-[10px] font-normal text-slate-400">億</span></h3>
+            </div>
+            <div class="glass-card p-3 rounded-lg shadow-sm border-t-2 border-indigo-500">
+                <p class="text-slate-500 text-[10px] font-bold uppercase tracking-wider">總體執行進度</p>
+                <h3 id="avgPaidRatio" class="text-lg font-bold mt-0.5 text-indigo-700">0%</h3>
+            </div>
+        </div>
+
+        <div class="space-y-4">
+            <div class="glass-card rounded-xl shadow-lg overflow-hidden bg-white border-none">
+                <div class="p-4 border-b flex flex-wrap justify-between items-center bg-slate-50/50 gap-4">
+                    <div>
+                        <h2 class="font-bold text-base text-slate-800">專案預算執行狀況</h2>
+                        <p class="text-[10px] text-slate-400 mt-0.5">單位：金額(萬) / 造價(元/坪)</p>
+                    </div>
+                    <div class="flex items-center">
+                        <div class="relative">
+                            <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
+                                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                            </span>
+                            <input type="text" id="searchInput" placeholder="搜尋專案名稱..." class="text-xs border border-slate-200 rounded-lg pl-9 pr-3 py-1.5 focus:ring-2 focus:ring-blue-500 outline-none w-48 shadow-sm bg-white">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="overflow-x-auto table-container">
+                    <table class="w-full text-left border-collapse min-w-[1500px]">
+                        <thead>
+                            <tr class="bg-slate-800 text-slate-100 text-[11px] font-semibold tracking-wide">
+                                <th class="p-3 sticky-col bg-slate-800 sticky-col-shadow w-[180px]">專案名稱</th>
+                                <th class="p-3 text-right w-[100px]">總建坪面積</th>
+                                <th class="p-3 text-right w-[110px] bg-blue-900/40">原編預算(萬)</th>
+                                <th class="p-3 text-right w-[110px] bg-blue-900/40 border-r border-slate-700">原編預算造價</th>
+                                <th class="p-3 text-right w-[110px] text-amber-300">差異金額(萬)</th>
+                                <th class="p-3 text-right w-[110px] text-amber-300">差異造價</th>
+                                <th class="p-3 text-right w-[90px] text-amber-300 border-r border-slate-700">差異率</th>
+                                <th class="p-3 text-right w-[110px] bg-emerald-900/40">執行預算(萬)</th>
+                                <th class="p-3 text-right w-[110px] bg-emerald-900/40 border-r border-slate-700">執行預算造價</th>
+                                <th class="p-3 text-right w-[110px] bg-indigo-900/40">請款累計(萬)</th>
+                                <th class="p-3 text-right w-[110px] bg-indigo-900/40">已請款造價</th>
+                                <th class="p-3 text-center w-[130px]">執行進度(請款)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="projectTableBody" class="divide-y divide-slate-100 text-[12px]">
+                            <!-- JS 動態生成 -->
+                        </tbody>
+                    </table>
+                </div>
+                <div id="noDataMessage" class="hidden p-12 text-center text-slate-400 text-sm font-medium">
+                    暫無執行資料
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-budget-app';
+
+        let projectData = [];
+        let currentUser = null;
+
+        async function initAuth() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (err) {
+                console.error("Auth failed:", err);
+            }
+        }
+
+        function calculateMetrics(p) {
+            const safeArea = parseFloat(p.area) || 1;
+            const origBud = parseFloat(p.originalBudget) || 0;
+            const execBud = parseFloat(p.execBudget) || 0;
+            const paidAmt = parseFloat(p.paid) || 0;
+
+            p.originalCost = Math.round((origBud * 10000) / safeArea);
+            p.execCost = Math.round((execBud * 10000) / safeArea);
+            p.diffAmount = execBud - origBud;
+            p.diffCost = p.execCost - p.originalCost;
+            p.diffRatio = origBud > 0 ? ((p.diffAmount / origBud) * 100).toFixed(2) : "0.00";
+            p.paidCost = Math.round((paidAmt * 10000) / safeArea);
+            p.paidRatio = execBud > 0 ? Math.round((paidAmt / execBud) * 100) : 0;
+            return p;
+        }
+
+        function formatToYi(wanValue) {
+            return (wanValue / 10000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        window.saveToCloud = async function(dataList) {
+            if (!currentUser) return;
+            const statusEl = document.getElementById('saveStatus');
+            statusEl.innerText = "同步中...";
+            try {
+                const dataDoc = doc(db, 'artifacts', appId, 'public', 'data', 'projects', 'main');
+                await setDoc(dataDoc, { 
+                    list: dataList,
+                    updatedAt: new Date().toISOString()
+                });
+                statusEl.innerText = "已同步";
+            } catch (err) {
+                console.error("Save error:", err);
+                statusEl.innerText = "同步失敗";
+            }
+        }
+
+        function updateStats() {
+            const totalExec = projectData.reduce((sum, p) => sum + (parseFloat(p.execBudget) || 0), 0);
+            const totalPaid = projectData.reduce((sum, p) => sum + (parseFloat(p.paid) || 0), 0);
+            const totalOriginal = projectData.reduce((sum, p) => sum + (parseFloat(p.originalBudget) || 0), 0);
+            const totalDiff = totalExec - totalOriginal;
+            
+            const totalPaidRatioSum = projectData.reduce((sum, p) => {
+                const metrics = calculateMetrics({...p});
+                return sum + metrics.paidRatio;
+            }, 0);
+            const avgRatio = projectData.length > 0 ? Math.round(totalPaidRatioSum / projectData.length) : 0;
+
+            document.getElementById('totalExecBudget').innerHTML = `$${formatToYi(totalExec)} <span class="text-[10px] font-normal text-slate-400">億</span>`;
+            document.getElementById('totalPaid').innerHTML = `$${formatToYi(totalPaid)} <span class="text-[10px] font-normal text-slate-400">億</span>`;
+            document.getElementById('totalDiff').innerHTML = `$${formatToYi(totalDiff)} <span class="text-[10px] font-normal text-slate-400">億</span>`;
+            document.getElementById('avgPaidRatio').innerText = `${avgRatio}%`;
+        }
+
+        window.renderTable = function(data = projectData) {
+            const tbody = document.getElementById('projectTableBody');
+            const noData = document.getElementById('noDataMessage');
+            
+            if (!data || data.length === 0) {
+                tbody.innerHTML = '';
+                noData.classList.remove('hidden');
+                updateStats();
+                return;
+            }
+            
+            noData.classList.add('hidden');
+            tbody.innerHTML = data.map(p => {
+                const item = calculateMetrics({...p});
+                const diffColor = item.diffAmount > 0 ? 'text-rose-700' : (item.diffAmount < 0 ? 'text-emerald-700' : 'text-slate-500');
+                const diffSign = item.diffAmount > 0 ? '+' : '';
+
+                return `
+                    <tr class="hover:bg-slate-50 transition-colors group">
+                        <td class="p-3 font-bold text-slate-900 sticky-col bg-white group-hover:bg-slate-50 sticky-col-shadow transition-colors">
+                            <div class="truncate" title="${item.name}">${item.name}</div>
+                        </td>
+                        <td class="p-3 text-right font-mono text-slate-900 font-medium">${Number(item.area).toLocaleString()}</td>
+                        <td class="p-3 text-right font-mono bg-blue-50/20 font-bold text-blue-950">${Number(item.originalBudget).toLocaleString()}</td>
+                        <td class="p-3 text-right font-mono bg-blue-50/20 text-blue-900 border-r border-slate-100">$${item.originalCost.toLocaleString()}</td>
+                        <td class="p-3 text-right font-mono font-bold ${diffColor}">${diffSign}${item.diffAmount.toLocaleString()}</td>
+                        <td class="p-3 text-right font-mono font-bold ${diffColor}">${diffSign}${item.diffCost.toLocaleString()}</td>
+                        <td class="p-3 text-right font-mono font-bold ${diffColor} border-r border-slate-100">${diffSign}${item.diffRatio}%</td>
+                        <td class="p-3 text-right font-mono bg-emerald-50/20 font-bold text-emerald-950">${Number(item.execBudget).toLocaleString()}</td>
+                        <td class="p-3 text-right font-mono bg-emerald-50/20 text-emerald-900 border-r border-slate-100">$${item.execCost.toLocaleString()}</td>
+                        <td class="p-3 text-right font-mono bg-indigo-50/20 font-bold text-indigo-950">${Number(item.paid).toLocaleString()}</td>
+                        <td class="p-3 text-right font-mono bg-indigo-50/20 text-indigo-900">$${item.paidCost.toLocaleString()}</td>
+                        <td class="p-3">
+                            <div class="flex items-center space-x-2">
+                                <div class="flex-1 bg-slate-200 rounded-full h-1.5 shadow-inner overflow-hidden">
+                                    <div class="bg-indigo-600 h-1.5 rounded-full transition-all duration-500" style="width: ${item.paidRatio}%"></div>
+                                </div>
+                                <span class="text-[10px] font-bold w-7 text-right text-slate-700">${item.paidRatio}%</span>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+            updateStats();
+        }
+
+        window.exportToExcel = function() {
+            if (projectData.length === 0) return;
+            const exportRows = projectData.map(p => {
+                const item = calculateMetrics({...p});
+                return {
+                    '專案名稱': item.name,
+                    '總建坪面積': item.area,
+                    '原編預算(萬)': item.originalBudget,
+                    '原編預算造價': item.originalCost,
+                    '差異金額(萬)': item.diffAmount,
+                    '差異造價': item.diffCost,
+                    '差異率': item.diffRatio + '%',
+                    '執行預算(萬)': item.execBudget,
+                    '執行預算造價': item.execCost,
+                    '請款累計(萬)': item.paid,
+                    '已請款造價': item.paidCost,
+                    '執行進度': item.paidRatio + '%'
+                };
+            });
+            const ws = XLSX.utils.json_to_sheet(exportRows);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "預算執行狀況");
+            XLSX.writeFile(wb, `預算執行狀況_${new Date().toISOString().split('T')[0]}.xlsx`);
+        }
+
+        // 修復與強化匯入功能
+        document.getElementById('excelInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const jsonData = XLSX.utils.sheet_to_json(worksheet);
+                    
+                    if (jsonData.length > 0) {
+                        const newList = jsonData.map((row, index) => {
+                            // 欄位容錯匹配
+                            return {
+                                id: Date.now() + index,
+                                name: String(row['專案名稱'] || row['案名'] || row['專案'] || '未命名專案'),
+                                area: parseFloat(row['總建坪面積'] || row['建坪'] || row['面積'] || 0),
+                                originalBudget: parseFloat(row['原編預算(萬)'] || row['原編預算'] || 0),
+                                execBudget: parseFloat(row['執行預算(萬)'] || row['執行預算'] || 0),
+                                paid: parseFloat(row['請款累計(萬)'] || row['累計請款'] || row['已請款'] || 0)
+                            };
+                        });
+                        projectData = newList;
+                        await window.saveToCloud(projectData);
+                        window.renderTable();
+                    }
+                } catch (err) {
+                    console.error("Import error:", err);
+                    alert("匯入格式錯誤，請檢查 Excel 標題欄位是否正確。");
+                }
+            };
+            reader.readAsArrayBuffer(file);
+            this.value = ''; // 清除輸入值，允許重複上傳同檔案
+        });
+
+        document.getElementById('searchInput').addEventListener('input', function(e) {
+            const term = e.target.value.toLowerCase();
+            window.renderTable(projectData.filter(p => p.name.toLowerCase().includes(term)));
+        });
+
+        initAuth();
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                currentUser = user;
+                const dataDoc = doc(db, 'artifacts', appId, 'public', 'data', 'projects', 'main');
+                onSnapshot(dataDoc, (snapshot) => {
+                    if (snapshot.exists()) {
+                        projectData = snapshot.data().list || [];
+                        window.renderTable();
+                    } else {
+                        window.renderTable([]);
+                    }
+                    document.getElementById('saveStatus').innerText = "雲端已連線";
+                }, (error) => {
+                    console.error("Snapshot error:", error);
+                    document.getElementById('saveStatus').innerText = "連線異常";
+                });
+            }
+        });
+    </script>
+</body>
+</html>
